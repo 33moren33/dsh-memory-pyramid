@@ -1,0 +1,44 @@
+{
+  "name": "dsh-memory-pyramid",
+  "version": "0.1.0",
+  "description": "给 DeepSeek Harness 补上时间轴记忆：定宽只追加的事实日志 + agent 自己维护的摘要金字塔，固定阅读预算下 recall 成本不随记忆量增长。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/33moren33/dsh-memory-pyramid.git"
+  },
+  "homepage": "https://github.com/33moren33/dsh-memory-pyramid#readme",
+  "bugs": {
+    "url": "https://github.com/33moren33/dsh-memory-pyramid/issues"
+  },
+  "scripts": {
+    "test": "node --test test/memory.test.js"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "deepseek-harness",
+    "agent-memory"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "license": "MIT"
+}

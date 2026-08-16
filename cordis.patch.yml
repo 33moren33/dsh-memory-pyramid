@@ -1,0 +1,7 @@
+# dsh-memory-pyramid bundle patch: one insert row, applied automatically when
+# the package is installed via `dsh plugin add` (the manifest's dsh.bundle
+# declaration makes this file a profile layer). Override config per profile in
+# your own cordis.patch.yml by addressing the same id.
+- insert:
+    - id: memory
+      name: 'dsh-memory-pyramid'
