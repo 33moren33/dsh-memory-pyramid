@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-pyramid",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "给 DeepSeek Harness 补上时间轴记忆：定宽只追加的事实日志 + agent 自己维护的摘要金字塔，固定阅读预算下 recall 成本不随记忆量增长。",
   "type": "module",
   "main": "lib/index.js",
@@ -37,8 +37,5 @@
     "deepseek-harness",
     "agent-memory"
   ],
-  "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1"
-  },
   "license": "MIT"
 }

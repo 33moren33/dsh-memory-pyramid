@@ -99,6 +99,8 @@ The serial edition works today and runs **nothing in the background**. On the ro
 
 ## Quick Install
 
+Prerequisites: pnpm on PATH — dsh uses it to manage plugins on every platform (`npm install -g pnpm`; if the global directory isn't writable, `npm install -g pnpm --prefix ~/.local` and put `~/.local/bin` on PATH). Installing from source additionally needs git; the plugin itself has zero dependencies, no build step, Node.js ≥ 19.
+
 One command:
 
 ```bash
@@ -139,6 +141,7 @@ To change configuration (e.g. `wakeLines`), override the same id in your profile
 | `migrate` | `true` | When the location changes, automatically move the old memory found in the workspace. |
 | `wakeLines` | `96` | Line budget of the memory view. **A reading budget, not a storage budget** — change it any time; nothing is recomputed. |
 | `injectWake` | `true` | Whether to inject the memory view at session start. Turned off, the tools still work; the view just stops appearing on its own. |
+| `liveView` | `false` | Whether the view updates live as memory changes mid-session. Off (default): the view is injected once at session start; facts written mid-session stay visible through tool receipts, and every new session opens with the full latest view. On: every memory change appends a fresh full view to the session (more injected tokens). Hot-reloaded — the current conversation follows the new setting from its next message. |
 
 Data defaults to `<workspace>/dsh_memory` (never the home directory). `LOG.txt` is plain text, append-only — commit it and a team shares one lived history; `TREE/` is pure cache, deleting it loses no facts. If the directory already exists: a matching identity marker is claimed untouched; anything else is refused with an explanation. **Two memories are never spliced** (records are addressed by position; splicing would silently shift every summary reference) — multiple old copies found means refuse and let a human decide.
 
@@ -178,7 +181,8 @@ The top of the pyramid is a multi-generation game of telephone; meaning drifts. 
 ## Roadmap
 
 - [x] v0.1 serial edition: five tools, session-range anchors, cache-safe injection, byte-level OptMem `TREE/` compatibility
-- [ ] **Injection refinement**: incremental dynamic injection — track what each session has already seen and inject only what it hasn't; plus a switch that, when off, injects one full view at session start only
+- [x] v0.1.1 injection switch: by default the view is injected once at session start (`liveView` switches back to live updates, hot-reloaded)
+- [ ] **Injection refinement**: incremental dynamic injection — track what each session has already seen and inject only what it hasn't
 - [ ] **Memory dashboard**: today the Memory view is readable only by the model — **you can't see your own memory**. Planned: a timeline list and pyramid-layer view where clicking a memory jumps back to the conversation slice that produced it (the anchor fields are written correctly *now* so that day needs no data migration)
 - [ ] **Pyramid tutorial**: flowcharts and screenshots explaining how the tower is built, read, broken, and repaired
 - [ ] **Parallel settlement**: hand memory-writing to a dedicated clone so the main thread is never interrupted; an idle sweeper picks up unclaimed conversation ranges
@@ -186,6 +190,8 @@ The top of the pyramid is a multi-generation game of telephone; meaning drifts. 
 
 ## Known Limits
 
+- **Where the memory lands**: in `dsh_memory/` under the **dsh server process's startup directory**. Headless runs one process per task from the workspace, so it lands in the workspace; but the web GUI is one long-lived process serving multiple workspaces — switching a session's workspace in the UI does **not** switch the memory location, and all sessions share the copy under the startup directory. Practical rule: **start `dsh web` from inside your workspace directory.**
+- The peer-dependency warning `@deepseek-ai/cordis missing` is harmless: cordis is only referenced in type annotations, never imported at runtime, and dsh ships its own. Removed as of v0.1.1; safe to ignore on older versions.
 - Concurrent multi-process writing is supported and lock-free; but **sub-agents should not write memory** (they can't see what's already recorded). Currently enforced by prompt convention, not by code.
 - Session anchors are faithfully stored and returned by `memory_recall`, but the tool that *opens* the original conversation from an anchor doesn't exist yet — that belongs to the parallel-settlement edition.
 - Early version; the injection shape is still evolving (see the first Roadmap item). **Full reliability claims are left to real-world testing and issue reports** — if you hit something, please open an issue.

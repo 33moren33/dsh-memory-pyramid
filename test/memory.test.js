@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { apply } from '../lib/index.js'
+import { apply, pickFrozenWake } from '../lib/index.js'
 import { FixedWidthLog, RECORD_SIZE } from '../lib/log.js'
 import { cover, nodeName, parseNode, Pyramid, tile, TREE_REC } from '../lib/pyramid.js'
 import { openDataDir } from '../lib/store.js'
@@ -389,4 +389,113 @@ test('v1 记忆库被拒绝，而不是用错位 9 字节的偏移去读它', ()
     JSON.stringify({ kind: 'dsh-memory', version: 1, createdAt: '2026-08-15T00:00:00.000Z' }))
   fs.writeFileSync(path.join(dir, 'LOG.txt'), Buffer.alloc(RECORD_SIZE, 0x20))
   assert.throws(() => openDataDir(dir, { migrate: false }), /错位 9 字节/)
+})
+
+// ── 冻结开关（v0.1.1）：视图开局注入一次，会话内不再更新 ──────────────────
+
+/**
+ * 伪造一条官方 runtime-context 快照事件。
+ * @param {number} seq - 事件号。
+ * @param {Array<{name: string, text: string}> | undefined} sections - 分段；省略＝清空墓碑。
+ * @returns {object}
+ */
+function snapshotEvent(seq, sections) {
+  return {
+    seq,
+    type: 'user/message',
+    data: {
+      source: {
+        kind: 'plugin',
+        plugin: '@deepseek-ai/dsh-system-prompt',
+        ...sections === undefined ? {} : { form: 'snapshot', sections },
+      },
+    },
+  }
+}
+
+test('冻结：找回本会话最后一份快照里自己那段原文', () => {
+  const session = {
+    events: [
+      { seq: 1, type: 'user/message', data: { source: { kind: 'user' } } },
+      snapshotEvent(2, [{ name: 'sandbox:policy', text: 'S' }, { name: 'dsh-memory:wake', text: '开局视图' }]),
+      snapshotEvent(9, [{ name: 'dsh-memory:wake', text: '第二份视图' }]),
+    ],
+    surface: { nodes: [1, 2, 9] },
+  }
+  assert.equal(pickFrozenWake(session), '第二份视图', '要最新那份，不是最老那份')
+})
+
+test('冻结：最新快照被 compaction 换掉时跳过它、继续找更老的（镜像官方判据）', () => {
+  const session = {
+    events: [
+      snapshotEvent(2, [{ name: 'dsh-memory:wake', text: '仍在 surface 的老快照' }]),
+      snapshotEvent(9, [{ name: 'dsh-memory:wake', text: '已被压掉的新快照' }]),
+    ],
+    surface: { nodes: [2] },
+  }
+  assert.equal(pickFrozenWake(session), '仍在 surface 的老快照')
+})
+
+test('冻结：全场没有 surface 上的快照 → 没有底，交回全量渲染', () => {
+  // 新会话（从没注入过）与快照被压光，都落在这里。
+  assert.equal(pickFrozenWake({ events: [], surface: { nodes: [] } }), undefined)
+  const compactedAway = {
+    events: [snapshotEvent(5, [{ name: 'dsh-memory:wake', text: '孤本' }])],
+    surface: { nodes: [] },
+  }
+  assert.equal(pickFrozenWake(compactedAway), undefined)
+})
+
+test('冻结：快照在但没有我们那段（清空墓碑/别家专场）→ 同样交回全量渲染', () => {
+  const tombstone = { events: [snapshotEvent(3)], surface: { nodes: [3] } }
+  assert.equal(pickFrozenWake(tombstone), undefined)
+  const othersOnly = {
+    events: [snapshotEvent(4, [{ name: 'sandbox:policy', text: 'S' }])],
+    surface: { nodes: [4] },
+  }
+  assert.equal(pickFrozenWake(othersOnly), undefined)
+})
+
+test('冻结：摸不到会话时降级，绝不冻错（版本脆弱性的安全阀）', () => {
+  assert.equal(pickFrozenWake(undefined), undefined)
+  assert.equal(pickFrozenWake({}), undefined)
+  assert.equal(pickFrozenWake({ events: 'not-an-array', surface: { nodes: [] } }), undefined)
+  assert.equal(pickFrozenWake({ events: [] }), undefined, 'surface 缺席也降级')
+  // 非官方署名的 user/message 不许被当成快照。
+  const impostor = {
+    events: [{
+      seq: 7,
+      type: 'user/message',
+      data: { source: { kind: 'plugin', plugin: 'someone-else', sections: [{ name: 'dsh-memory:wake', text: '冒名' }] } },
+    }],
+    surface: { nodes: [7] },
+  }
+  assert.equal(pickFrozenWake(impostor), undefined)
+})
+
+test('冻结接线：默认冻结有底照抄；liveView:true 恢复实时渲染', async () => {
+  /** 装载一次插件，截获 context() 的注册。 @param {object} extra */
+  const mountPrompt = (extra) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wake-'))
+    const tools = new Map()
+    let wake
+    apply({
+      get: () => undefined,
+      systemPrompt: { section() {}, context(def) { wake = def } },
+      tools: { register(def) { tools.set(def.name, def) } },
+    }, { dataDir: dir, ...extra })
+    return { tools, wake }
+  }
+
+  const frozen = mountPrompt({})
+  const note = frozen.tools.get('memory_note')
+  await note.execute({ text: '写入后视图本该变' }, { agent: { session: { id: 'session-x', seq: 1 } } })
+  const base = snapshotEvent(2, [{ name: 'dsh-memory:wake', text: '开局那份' }])
+  const ac = { scope: { session: { events: [base], surface: { nodes: [2] } } } }
+  assert.equal(frozen.wake.text(ac), '开局那份', '默认冻结：写入后仍照抄开局原文')
+  assert.match(frozen.wake.text({ scope: {} }), /写入后视图本该变/, '摸不到会话 → 降级实时渲染')
+
+  const live = mountPrompt({ liveView: true })
+  await live.tools.get('memory_note').execute({ text: '实时可见' }, { agent: { session: { id: 'session-y', seq: 1 } } })
+  assert.match(live.wake.text(ac), /实时可见/, 'liveView:true：无视冻结底，永远渲染当前')
 })
