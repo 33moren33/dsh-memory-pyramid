@@ -152,7 +152,7 @@ Data defaults to `<workspace>/dsh_memory` (never the home directory). `LOG.txt` 
 | `memory_note` | Record one fact. One line, ≤280 bytes, append-only, never edited. |
 | `memory_summarize` | Pay the pyramid's upkeep: when a block fills, write the one line that will represent it. |
 | `memory_zoom` | Open any `#a-b` node into its two halves — the cheap way to drill down. |
-| `memory_recall` | Scan all facts verbatim, or read a range of originals. Every fact comes with its session anchor. |
+| `memory_recall` | Scan all facts with a regular expression (`from`/`to` bound the scan), or read a range of originals. A shortened answer reports how many matches it held back. Every fact comes with its session anchor. |
 | `memory_forget` | Discard a bad summary and queue a rewrite. **Redraws the map, never touches the territory.** |
 
 ## Why it never slows down
