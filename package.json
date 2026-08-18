@@ -8,6 +8,9 @@
     ".": {
       "default": "./lib/index.js"
     },
+    "./client": {
+      "default": "./lib/client.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -17,6 +20,12 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
     }
   },
   "repository": {
@@ -28,7 +37,7 @@
     "url": "https://github.com/33moren33/dsh-memory-pyramid/issues"
   },
   "scripts": {
-    "test": "node --test test/memory.test.js"
+    "test": "node --test"
   },
   "keywords": [
     "dsh",
