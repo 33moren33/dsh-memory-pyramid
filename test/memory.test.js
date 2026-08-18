@@ -182,7 +182,7 @@ test('⭐ 预算是硬的：欠债再多也不超行数，而不是铺成原文'
 })
 
 test('节点名与区间双向一致，且拒绝不对齐的区间', () => {
-  for (const [lo, hi] of [[0, 1], [0, 2], [10, 12], [64, 128]]) {
+  for (const [lo, hi] of [[0, 2], [10, 12], [64, 128]]) {
     const parsed = parseNode(nodeName(lo, hi))
     assert.equal(parsed.lo, lo)
     assert.equal(parsed.hi, hi)
@@ -193,6 +193,13 @@ test('节点名与区间双向一致，且拒绝不对齐的区间', () => {
   assert.throws(() => parseNode('0-2'), /not a real block/) // 长度不是 2 的幂
   assert.throws(() => parseNode('1-2'), /not a real block/) // 长度对但没对齐
   assert.throws(() => parseNode('nope'), /must look like/)
+})
+
+test('⭐ 单条事实不是块：`#n-n` 这种形状根本不存在', () => {
+  // 2⁰ 也是 2 的幂、也对齐，所以它曾被放行——于是凭空多出一种上游没有的东西，
+  // 视图把单条事实打印成 `#10006-10006`，模型照抄去 recall 一搜得零条。
+  assert.throws(() => parseNode('5-5'), /single fact is not a node/)
+  assert.throws(() => parseNode('#5-5'), /written #5/, '报错要指向它真正的名字')
 })
 
 test('定宽日志：位置即身份，一次寻址', () => {
@@ -210,7 +217,49 @@ test('定宽日志：位置即身份，一次寻址', () => {
   assert.equal(record.sessionId, 'sess-37')
   assert.equal(record.seqLo, 74)
   assert.equal(log.read(50), undefined)
-  assert.deepEqual(log.search('事实 4', 3).map(h => h.seq), [49, 48, 47], '搜索由新到旧')
+  assert.deepEqual(log.search(/事实 4/i, 3).records.map(h => h.seq), [49, 48, 47], '搜索由新到旧')
+})
+
+test('⭐ 搜索必须数完再交：只返最新几条，但说得出一共命中多少', () => {
+  const log = new FixedWidthLog(scratch())
+  for (let i = 0; i < 50; i++) log.append({ text: `事实 ${i}` })
+
+  // 「事实 4」命中 事实 4 与 事实 40..49，共 11 条。
+  const few = log.search(/事实 4/i, 3)
+  assert.equal(few.records.length, 3, '只交出请求的条数')
+  assert.equal(few.matched, 11, '⭐ 数的是全部命中，不是交出去的那几条')
+
+  // 早先的写法凑够 limit 就跳出，于是这个数根本不存在，回执只能报库总条数
+  // ——一句真话，读起来却是「一共就命中这么多」。截断必须自己看得见。
+  const all = log.search(/事实 4/i, 99)
+  assert.equal(all.matched, 11)
+  assert.equal(all.records.length, 11, '够装时全给，matched 与实交一致')
+})
+
+test('⭐ from/to 夹住扫描范围：不必靠把 limit 拉大来够早期记忆', () => {
+  const log = new FixedWidthLog(scratch())
+  for (let i = 0; i < 50; i++) log.append({ text: `事实 ${i}` })
+
+  const early = log.search(/事实/i, 99, { from: 0, to: 10 })
+  assert.equal(early.matched, 10, '只数窗口内的')
+  assert.deepEqual(early.records.map(r => r.seq).slice(0, 3), [9, 8, 7])
+
+  const late = log.search(/事实/i, 99, { from: 45 })
+  assert.equal(late.matched, 5, '只给下界也成立')
+  assert.equal(log.search(/事实/i, 99, { from: 10, to: 10 }).matched, 0, '空窗口即零')
+})
+
+test('⭐ query 是正则：一次覆盖多种写法，序号与时间戳也在可搜范围内', () => {
+  const log = new FixedWidthLog(scratch())
+  log.append({ text: '白骨夫人被打杀' })
+  log.append({ text: '尸魔三戏唐三藏' })
+  log.append({ text: '泾河龙王犯了天条' })
+
+  // 子串匹配一次只能试一个词；同一件事的几种叫法，正则一趟就够。
+  assert.equal(log.search(/白骨夫人|尸魔/i, 9).matched, 2, '别名一趟拿齐')
+  // 匹配的是 "#序号 时间戳 正文"，所以位置与时间不必另开参数。
+  assert.equal(log.search(/^#1 /i, 9).records[0].text, '尸魔三戏唐三藏', '按序号定位')
+  assert.equal(log.search(new RegExp(`^#\\d+ ${new Date().getUTCFullYear()}-`, 'i'), 9).matched, 3, '按年份圈选')
 })
 
 test('中文按字节计数，不按字符', () => {
@@ -307,6 +356,44 @@ test('真实长度的会话 id 完整存下；装不下时留空而不是留半�
   log.append({ text: '指针装不下的一条', sessionId: `${real}-and-then-some` })
   assert.equal(log.read(1).sessionId, '', '装不下就留空——半截 id 是会骗人的死指针')
   assert.equal(log.read(1).text, '指针装不下的一条', '正文不受影响')
+})
+
+test('⭐ seq 超出字段宽度时整个锚作废，而不是留一个看不出问题的数', () => {
+  const log = new FixedWidthLog(scratch())
+  const real = 'session-cafa66e3-309b-472b-8c66-f22167a54730'
+  // 早先补零不够就留低位：100000000 会写成 00000000，123456789 会写成 23456789
+  // ——两个合法数字，顺着回会话会停在一个不相干的事件上。
+  log.append({ text: 'seq 装不下的一条', sessionId: real, seqLo: 123456789, seqHi: 123456790 })
+  const record = log.read(0)
+  assert.equal(record.seqLo, 0, '不许留低位——23456789 是个看不出问题的错答案')
+  assert.equal(record.seqHi, 0)
+  assert.equal(record.sessionId, '', '锚是一个整体：一格装不下，三格一起作废')
+  assert.equal(record.text, 'seq 装不下的一条', '记忆本身照记，只是没有指针')
+})
+
+test('⭐ 视图里的单条编号就是 recall 搜得到的那个编号（三个面说同一种话）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wake-'))
+  const tools = new Map()
+  let wake
+  apply({
+    get: () => undefined,
+    systemPrompt: { section() {}, context(def) { wake = def } },
+    tools: { register(def) { tools.set(def.name, def) } },
+  }, { dataDir: dir, liveView: true })
+  const note = tools.get('memory_note')
+  for (let i = 0; i < 3; i++) {
+    await note.execute({ text: `事实 ${i}` }, { agent: { session: { id: 'session-w', seq: i + 1 } } })
+  }
+
+  const view = wake.text({ scope: {} })
+  assert.match(view, /^#1 \d{4}-\d{2}-\d{2} 事实 1$/m, '单条事实打 #N')
+  assert.doesNotMatch(view, /^#\d+-\d+ /m, '三条全装得下，视图里不该有块')
+
+  // 模型从视图抄一个编号去搜——必须搜得到。视图打 `#1-1` 时这一搜得零条：
+  // 格式合法、数字真实、无声无息，而 recall 的匹配面上那行本来就叫 `#1`。
+  const hit = await tools.get('memory_recall').execute({ query: '^#1 ' })
+  assert.equal(hit.matched, 1, '⭐ 视图上抄下来的编号必须搜得到')
+  assert.equal(hit.records[0].text, '事实 1')
 })
 
 test('数据目录自带 .gitattributes，但绝不覆盖已有的那份', () => {
