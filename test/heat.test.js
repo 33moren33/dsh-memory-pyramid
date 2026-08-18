@@ -189,6 +189,64 @@ test('打开基底记在那条事实上；人从面板点开与模型走 memory_
   assert.deepEqual(unpack((await callRoute(routes, '/dsh-memory/panel/heat')).open), [2])
 })
 
+test('⭐ 只读挂上来的参照库：读得到，但一个字节都不写', async () => {
+  // 先造一个"别人的库"：4 条事实、两块摘要，外加一份架上快照。
+  const foreign = scratch()
+  {
+    const { tools } = mount(foreign)
+    fs.mkdirSync(path.join(foreign, 'memory_handoff'), { recursive: true })
+    fs.writeFileSync(path.join(foreign, 'memory_handoff', 'ref.md'), '参照库的原文')
+    for (let i = 0; i < 3; i++) await tools.get('memory_note').execute({ text: `参照 ${i}` }, {})
+    await tools.get('memory_note').execute({ text: '参照 3', source: 'ref.md' }, {})
+    await tools.get('memory_summarize').execute({ node: '0-1', text: '前两条' })
+  }
+  const before = snapshot(foreign)
+
+  const dir = scratch()
+  const { tools, routes } = mount(dir, { packs: [{ name: 'ref', dir: foreign }] })
+  await tools.get('memory_note').execute({ text: '本库唯一的一条' }, {})
+
+  const own = await callRoute(routes, '/dsh-memory/panel/state')
+  assert.equal(own.total, 1, '缺省看的是本库')
+  assert.deepEqual(own.packs, [{ name: 'ref', total: 4 }], '参照库列在清单里')
+
+  const ref = await callRoute(routes, '/dsh-memory/panel/state?pack=ref')
+  assert.equal(ref.total, 4, '带上 pack 就看那个库')
+  assert.equal(ref.pack, 'ref')
+  assert.equal(ref.wake.text, '', '⭐ 参照库没有「此刻的记忆」——它根本没被注入过，渲染一份就是编造')
+  assert.ok(ref.wake.blocks.length > 0, '但覆盖照算：若它是你的库，开局会注入这些')
+
+  const block = await callRoute(routes, '/dsh-memory/panel/block?lo=0&hi=1&pack=ref')
+  assert.equal(block.record.text, '参照 0', '正文读得到')
+
+  // 打开参照库的出处：读得到，但**不许记账**——那不是这台机器的使用痕迹。
+  const opened = await callRoute(routes, '/dsh-memory/panel/source?name=ref.md&fact=3&pack=ref')
+  assert.equal(opened.text, '参照库的原文')
+  const refHeat = await callRoute(routes, '/dsh-memory/panel/heat?pack=ref')
+  assert.deepEqual(unpack(refHeat.open), [0, 0, 0, 0], '参照库的用量账一笔都没长')
+
+  assert.deepEqual(snapshot(foreign), before, '⭐ 从头到尾，别人那个目录一个字节都没变')
+})
+
+/**
+ * 一个目录的逐文件字节快照。用来钉死「只读」这句承诺。
+ * @param {string} root - 目录。
+ * @returns {Record<string, number>} 相对路径 → 字节数。
+ */
+function snapshot(root) {
+  const out = {}
+  const walk = (at, prefix) => {
+    for (const entry of fs.readdirSync(at, { withFileTypes: true })) {
+      const full = path.join(at, entry.name)
+      const key = prefix + entry.name
+      if (entry.isDirectory()) walk(full, key + '/')
+      else out[key] = fs.statSync(full).size
+    }
+  }
+  walk(root, '')
+  return out
+}
+
 test('⭐ 用量账是可丢的：整个 HEAT 删掉，记忆一条不少', async () => {
   const dir = scratch()
   const { tools, routes } = mount(dir)
