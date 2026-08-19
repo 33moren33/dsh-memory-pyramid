@@ -40,6 +40,8 @@ function loadEngine() {
     useState: () => [null, () => {}],
     useEffect() {}, useRef: () => ({ current: null }), useCallback: f => f, Fragment: 'F',
   }
+  // 记录式 createElement：悬浮球图标是**算**出来的一堆 rect，坐标得看得见才测得了
+  react.createElement = (type, props, ...kids) => ({ type, props, kids })
   return captured.factory(name => {
     if (name === 'react') return react
     throw new Error('unexpected require: ' + name)
@@ -175,4 +177,146 @@ test('层的名字按三层结构定格，「地基/基座」不许再出现', (
   assert.equal(E.rowLabel(E.BASE), '基底')
   assert.equal(E.rowLabel(0), '1层')
   assert.equal(E.rowLabel(3), '4层')
+})
+
+// ══ 悬浮球图标 ════════════════════════════════════════════════════════════
+// 它是「面板复位后那张图」的等比缩小版，所以错法与塔同族、而且更难看出来——
+// 图标只有 46px，粗一圈、少一行、右边该空没空，肉眼都只觉得"有点怪"。
+
+const HOT = '#f76b15'
+/** 图标里的那些 rect（按 y 分行）。 */
+function ballRows(state) {
+  const svg = E.ballIcon(state, HOT)
+  const rows = new Map()
+  for (const kid of svg.kids) {
+    if (kid.type !== 'rect') continue
+    const list = rows.get(kid.props.y) || []
+    list.push(kid.props)
+    rows.set(kid.props.y, list)
+  }
+  return [...rows.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v)
+}
+/** 后厨 `/state` 的最小样子。 */
+function panelState(total, blocks = []) {
+  return { total, levels: {}, wake: { blocks }, pendingCount: 0 }
+}
+
+test('⭐ 悬浮球图标：没有数据就画空，不画一座假塔', () => {
+  assert.equal(E.ballIcon(null, HOT).kids.length, 0)
+  assert.equal(E.ballIcon(panelState(0), HOT).kids.length, 0, '零条记忆时一格都不画')
+})
+
+test('⭐ 悬浮球图标：画全部层，一层不抽稀一层不封顶', () => {
+  // 层数＝log2(条数)+1 摘要/事实层，再加基底那一行
+  assert.equal(ballRows(panelState(70)).length, 8, '70 条 → 7 层 + 基底')
+  assert.equal(ballRows(panelState(10020)).length, 15, '10020 条 → 14 层 + 基底')
+  assert.equal(ballRows(panelState(1000000)).length, 21, '一百万条也照画，不封顶')
+})
+
+test('⭐ 悬浮球图标：塔尖那层右边该空一截（位置按 2^L/T 算，不是按 n 等分）', () => {
+  const rows = ballRows(panelState(10020))
+  const inner = E.BALL_BOX - E.BALL_PAD * 2
+  const top = rows[0].reduce((w, r) => w + r.width, 0)
+  assert.ok(top < inner * 0.9,
+    '最上面那层只盖到 2^L×n，右边必须留空——按 (i+.5)/n 等分就会铺满，那是编造')
+  const bottom = rows[rows.length - 1][0]
+  assert.ok(Math.abs(bottom.width - inner) < 0.01, '基底与第一层 1:1，铺满整幅')
+})
+
+test('⛔ 悬浮球图标：注入那截与灰底的带子**等高**，且宽度按真值不被兜底撑大', () => {
+  // 万条档一个 128 宽的块画出来才 0.49px。曾经用 max(.8, 真宽) 兜底，于是 +65%，
+  // 挨着的几十块各自撑大再叠起来，橘色那截就比灰带粗一圈（CEO 一眼看出来的）。
+  const total = 10020
+  const rows = ballRows(panelState(total, [[0, 128], [128, 256], [4096, 4224]]))
+  const inner = E.BALL_BOX - E.BALL_PAD * 2
+  const hot = rows.flat().filter(r => r.fill === HOT)
+  const grey = rows.flat().filter(r => r.fill !== HOT)
+  assert.ok(hot.length > 0, '给了 cover 就得画出来')
+  for (const r of hot) {
+    assert.ok(grey.some(g => g.height === r.height), '注入段的高度必须等于灰带的高度')
+  }
+  // [0,128) 与 [128,256) 是连着的两块 → 并成一段，宽度＝256/T
+  const merged = hot.find(r => Math.abs(r.x - E.BALL_PAD) < 0.01)
+  assert.ok(merged, '第一段从最左边起画')
+  assert.ok(Math.abs(merged.width - (256 / total) * inner) < 0.01,
+    '连着的块并成一段、宽度按真值——不是一块一个 rect 各自兜底再叠')
+})
+
+test('⭐ 悬浮球图标：块还分得开时一块一颗点，且只有被注入的那颗换色', () => {
+  // ⚠ "分得开"是算出来的，不是想当然：70 条铺在 38px 里，第一层一条才 0.54px，
+  //   早就叠成带了。真正还看得见一颗颗的是上面几层——TREE/8 有 8 个块、每块 4.3px。
+  const rows = ballRows(panelState(70, [[8, 16]]))  // TREE/8 的第 1 块被注入
+  const row = rows[3]                               // r=3 → L = NROWS-2-r = 3
+  assert.equal(row.length, 8, 'TREE/8 有 8 个块，分得开就该是 8 颗点')
+  assert.equal(row.filter(r => r.fill === HOT).length, 1, '只有那一颗是注入色')
+  assert.equal(row[1].fill, HOT, '换色的必须正是第 2 颗')
+})
+
+test('⭐ 时间轴左端锚点：永远比刻度粗一级，绝不跟刻度说同一句话', () => {
+  // 病在这儿：刻度是**相对**的，只有跨上一级那一刻才升格成两级，而一屏之内不跨级
+  // 时一次都不升格（第一个刻度更是天生不可能升格）。于是轴上只剩「16分 36分 40分」
+  // 这样的裸数字，没有一个字说这是哪天哪个小时。锚点把绝对坐标钉在起点。
+  //
+  // ⭐ 但锚点**不许说到刻度那一级**：分档的刻度本来就写着「16分」，锚点再写一个
+  //    「16分」是同一件事说两遍，白占一行还让人以为那是另一个时刻。
+  const at = new Date(2026, 7, 16, 17, 16, 7).getTime()   // 2026-08-16 17:16:07
+  assert.deepEqual(E.anchorLines(at, 'month'), ['26年'])
+  assert.deepEqual(E.anchorLines(at, 'day'), ['26年8月'])
+  assert.deepEqual(E.anchorLines(at, 'hour'), ['26年8月', '16号'])
+  assert.deepEqual(E.anchorLines(at, 'minute'), ['26年8月', '16号17时'])
+  assert.deepEqual(E.anchorLines(at, 'second'), ['26年8月', '16号17时', '16分'])
+
+  // 反向钉死这条规则：刻度在说的那一级，锚点末尾一个字都不许碰。
+  const tickUnit = { month: '月', day: '号', hour: '时', minute: '分', second: '秒' }
+  for (const [bucket, unit] of Object.entries(tickUnit)) {
+    const tail = E.anchorLines(at, bucket).at(-1)
+    assert.ok(!tail.endsWith(unit), `${bucket} 档的锚点说到了刻度那一级（${tail}）`)
+  }
+})
+
+test('⭐ 刻度一个字都没画出来时，锚点补到刻度那一级——轴上永远有一个可读的绝对时刻', () => {
+  // 判例（CEO 2026-08-19 现场）：三条记忆写在同一秒，第一条被推到屏幕外、
+  // 第二条被它的避让占位挤掉，于是**刻度轴一个字都没有**，而锚点还按"粗一级"
+  // 的规矩只说到「时」——分和秒都没人说，等于什么都没说。
+  // 「粗一级」的前提是**刻度在说那一级**；前提没了，规矩就不该照用。
+  const at = new Date(2026, 7, 16, 17, 36, 34).getTime()
+  assert.deepEqual(E.anchorLines(at, 'second', true), ['26年8月', '16号17时', '36分34秒'])
+  assert.deepEqual(E.anchorLines(at, 'minute', true), ['26年8月', '16号17时', '36分'])
+  assert.deepEqual(E.anchorLines(at, 'hour', true), ['26年8月', '16号17时'])
+  assert.deepEqual(E.anchorLines(at, 'day', true), ['26年8月', '16号'])
+  assert.deepEqual(E.anchorLines(at, 'month', true), ['26年8月'])
+
+  // 补齐之后仍不许超过三行——轴条高度是按三行让的。
+  for (const bucket of ['month', 'day', 'hour', 'minute', 'second']) {
+    assert.ok(E.anchorLines(at, bucket, true).length <= 3, `${bucket} 档补齐后超过三行`)
+    // 补齐版必须**真的比常规版多说一级**，否则这条退出口是摆设。
+    const normal = E.anchorLines(at, bucket).join('')
+    const full = E.anchorLines(at, bucket, true).join('')
+    assert.ok(full.length > normal.length, `${bucket} 档补齐后没多说任何东西`)
+  }
+})
+
+test('锚点最多三行——轴条高度是按三行让的，多一行就会被切掉', () => {
+  const at = Date.now()
+  for (const bucket of ['month', 'day', 'hour', 'minute', 'second']) {
+    assert.ok(E.anchorLines(at, bucket).length <= 3, `${bucket} 档超过三行`)
+  }
+})
+
+test('⭐ 当前工作区：先拿选中会话去名册反查，查不到才退到最近用过的那个', () => {
+  // 官方口径（docs/subsystems/workspace.md）：归属的真相是那份有序 sessionIds，
+  // **不是从路径反推**。所以反查名册优先，别倒过来。
+  const list = {
+    items: [
+      { workspaceId: 'w1', path: '/srv/alpha', sessionIds: ['session-a'] },
+      { workspaceId: 'w2', path: '/srv/beta', sessionIds: ['session-b'] },
+    ],
+    recentWorkspaceId: 'w2',
+  }
+  assert.equal(E.workspaceRootOf(list, { sessionId: 'session-a' }), '/srv/alpha')
+  // 选中的会话不属于任何已登记工作区（Ungrouped）→ 退到 recent
+  assert.equal(E.workspaceRootOf(list, { sessionId: 'session-zzz' }), '/srv/beta')
+  // 一个工作区都没有 → 老实答"没选"，绝不随便挑一个
+  assert.equal(E.workspaceRootOf({ items: [] }, { sessionId: 'session-a' }), null)
+  assert.equal(E.workspaceRootOf(undefined, undefined), null)
 })

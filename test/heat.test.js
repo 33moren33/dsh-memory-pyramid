@@ -208,13 +208,22 @@ test('⭐ 只读挂上来的参照库：读得到，但一个字节都不写', a
 
   const own = await callRoute(routes, '/dsh-memory/panel/state')
   assert.equal(own.total, 1, '缺省看的是本库')
-  assert.deepEqual(own.packs, [{ name: 'ref', total: 4 }], '参照库列在清单里')
+  assert.deepEqual(
+    own.packs
+      .filter(pack => !pack.bundled) // 随包发布的示例库总在，这里只看这台机器上配出来的
+      .map(({ name, total, synthetic, removable }) => ({ name, total, synthetic, removable })),
+    [{ name: 'ref', total: 4, synthetic: null, removable: false }],
+    '参照库列在清单里；profile 里配的既不算合成、也不许从面板卸',
+  )
 
   const ref = await callRoute(routes, '/dsh-memory/panel/state?pack=ref')
   assert.equal(ref.total, 4, '带上 pack 就看那个库')
   assert.equal(ref.pack, 'ref')
-  assert.equal(ref.wake.text, '', '⭐ 参照库没有「此刻的记忆」——它根本没被注入过，渲染一份就是编造')
-  assert.ok(ref.wake.blocks.length > 0, '但覆盖照算：若它是你的库，开局会注入这些')
+  // ⭐ 参照库照样渲染视图，含义靠抬头限定（「若它是你的库，开局会注入这些」）。
+  //   参照库的用处就在这份文本上：几十条与几千条的塔完全是两回事，那个差别只有把
+  //   两份视图摆在一起才说得清。**标注清楚的假设不是编造。**
+  assert.ok(ref.wake.text.includes('参照 3'), '⭐ 参照库的视图照常渲染，同一套算法算出来的')
+  assert.ok(ref.wake.blocks.length > 0, '覆盖照算：若它是你的库，开局会注入这些')
 
   const block = await callRoute(routes, '/dsh-memory/panel/block?lo=0&hi=1&pack=ref')
   assert.equal(block.record.text, '参照 0', '正文读得到')

@@ -46,6 +46,10 @@ Once installed, every session wakes up with the pyramid memory injected; as memo
 
 The closer to now, the more verbatim; the older, the coarser — but **not a single original line is ever lost**, and you can drill back down at any time.
 
+Here is the same thing from your side of the screen:
+
+<img src="assets/panel-full.png" alt="The memory dashboard" width="900" />
+
 ## Why "Pyramid"
 
 Every time two facts fill up, the agent writes one line that stands for them; when two of *those* lines pair up, it writes one coarser line. Each layer holds half as many blocks as the one below — the shape is a tower:
@@ -137,10 +141,11 @@ To change configuration (e.g. `wakeLines`), override the same id in your profile
 | Key | Default | Description |
 |---|---|---|
 | `namespace` | none | A shared-area name. If set, data lands in `<workspace>/<name>/dsh_memory`. Single directory name only. |
-| `dataDir` | none | Fully custom path (absolute, or relative to the workspace root). **Overrides** `namespace`. |
+| `dataDir` | none | Fully custom path (absolute, or relative to the workspace root). **Overrides** `namespace`. An absolute path also overrides the workspace, so every workspace reads the same library — this is how you get one shared brain. |
 | `migrate` | `true` | When the location changes, automatically move the old memory found in the workspace. |
 | `wakeLines` | `96` | Line budget of the memory view. **A reading budget, not a storage budget** — change it any time; nothing is recomputed. |
 | `injectWake` | `true` | Whether to inject the memory view at session start. Turned off, the tools still work; the view just stops appearing on its own. |
+| `packs` | none | Mount further memory libraries onto the dashboard for reference, as `[{name: "example", dir: "path"}]`. **Not one byte is written to them**: no usage ledger, no summary upkeep, no injected view. Four sample libraries already ship with the plugin (see above); this option is for adding your own. |
 | `liveView` | `false` | Whether the view updates live as memory changes mid-session. Off (default): the view is injected once at session start; facts written mid-session stay visible through tool receipts, and every new session opens with the full latest view. On: every memory change appends a fresh full view to the session (more injected tokens). Hot-reloaded — the current conversation follows the new setting from its next message. |
 
 Data defaults to `<workspace>/dsh_memory` (never the home directory). `LOG.txt` is plain text, append-only — commit it and a team shares one lived history; `TREE/` is pure cache, deleting it loses no facts. If the directory already exists: a matching identity marker is claimed untouched; anything else is refused with an explanation. **Two memories are never spliced** (records are addressed by position; splicing would silently shift every summary reference) — multiple old copies found means refuse and let a human decide.
@@ -153,7 +158,63 @@ Data defaults to `<workspace>/dsh_memory` (never the home directory). `LOG.txt` 
 | `memory_summarize` | Pay the pyramid's upkeep: when a block fills, write the one line that will represent it. |
 | `memory_zoom` | Open any `#a-b` node into its two halves — the cheap way to drill down. |
 | `memory_recall` | Scan all facts with a regular expression (`from`/`to` bound the scan), or read a range of originals. A shortened answer reports how many matches it held back. Every fact comes with its session anchor. |
+| `memory_open` | Follow one fact's anchor back and hand over the full source it was distilled from. |
 | `memory_forget` | Discard a bad summary and queue a rewrite. **Redraws the map, never touches the territory.** |
+
+## Memory dashboard
+
+Once installed, a floating button appears in the bottom-right corner; open it and the dashboard takes the right half of the screen — **the first time your memory is something a human can look at.**
+
+A real tower: one brick is one summary, the bottom row is individual facts. The lit ones are what is being injected into the model right now — **same data, same algorithm** as the view the model receives, so there is no second source of truth. Colour encodes exactly one thing: heat, meaning how often that memory has actually been used.
+
+<img src="assets/panel-tower.png" alt="The whole tower; orange-ringed bricks are the ones being injected right now" width="740" />
+
+Higher layers hold fewer bricks, each covering more; the top row stands for everything. **The orange-outlined bricks are the ones in the context right now** — you can see at a glance what the model actually read at session start.
+
+Zoom in and each brick carries the text of the stretch it represents:
+
+<img src="assets/panel-zoom.png" alt="Zoomed in, each brick carries its summary text" width="740" />
+
+A timeline underneath marks the span these memories cover; it pans and zooms, and the tower itself pans vertically when it grows taller than the card.
+
+The knobs in the bottom-right take effect immediately: injected line count, bytes per fact, frozen vs. live.
+
+The dashboard mounts through the front door dsh leaves open for third parties. Where there is no web UI (headless, for instance) it is simply absent, and memory itself keeps working.
+
+### Click a memory, land on where it came from
+
+Click a brick to read its text. Click a fact on the bottom row to walk back to its origin:
+
+- **Came from a conversation** — jumps back to that conversation. Every fact stores a `sessionId` plus a range of sequence numbers, so what gets highlighted is **a complete turn**, not a single point.
+- **Came from imported text** — opens that source in full.
+
+When a fact has no recorded origin the button is greyed out. It never pretends to have one.
+
+### Four sample libraries ship with the plugin
+
+A tower of fifty facts and a tower of a few thousand are **completely different objects** — at fifty, the whole library fits in the context and not a single summary block is used; only in the thousands do the layers appear. But someone who just installed the plugin has zero facts.
+
+So the package ships four ready-made libraries — **50 / 100 / 500 / 1000 facts** — switchable from the top-left of the dashboard the moment you install. No configuration, no download, and nothing is copied into your workspace. They are there in every workspace you open.
+
+Switching to one shows **exactly what your own library shows**: the same tower, the same cards, the same memory view produced by the same algorithm. The difference speaks for itself — at 50 facts the view is 51 lines of verbatim originals and not one summary block is used; at 1000 it is 97 lines that open with coarse bricks like `#0-63`. **Both fit inside the same 96-line budget**, which is the claim "twenty times the memory, not one extra line to read at session start" stated as something you can look at.
+
+All four are marked **⚗ synthetic**: the text is a public-domain novel, and the timestamps and heat values are generated, not anyone's real usage. That marking lives inside the library itself, so it travels wherever the library is copied and **can never be misread as a real ledger**.
+
+The sample libraries are read-only — the dashboard does not write a single byte into them. And because they live inside the plugin's install directory rather than your workspace, the dashboard offers no unmount button for them. **Walking back to an origin does not work inside a sample library yet**: their conversation transcripts ship inside the pack but were never registered with dsh, so the click does nothing. In your own library it works normally.
+
+There is also a 10,000-fact library, too large to ship in the package; it will be offered as a Releases download. Mounting any other library works the same way: **drop it into `<your workspace>/dsh_memory/packs/`** and the dashboard picks it up, or type the path into the dashboard directly.
+
+## Importing existing text
+
+The tower has three layers: **source material** is the raw input, a **fact** is the single ≤280-byte line distilled from it, and a **summary** is the coarser brick that facts merge into. Source material has no length limit — a slice of conversation is source material, and so is any document you already have.
+
+Inside the memory directory there is a `memory_handoff/` folder, and **putting a file in it counts as shelving it** — there is no write tool; the folder itself is the entrance. Markdown is merely the most convenient format; any plain text works.
+
+Shelved is not the same as stored: a file placed there is only raw material. It enters the tower when someone reads it and writes a fact from it. **One source, one fact, strictly one-to-one** — which is why any fact leads back to exactly one origin.
+
+Every fact written this way carries an anchor to the source it came from, and `memory_open` follows that anchor back to the full text: the detail a one-line fact cannot hold is always one step away.
+
+Byte count and fingerprint are recorded at shelving time. If the file is edited afterwards, opening it says so outright instead of handing you the new bytes as if nothing happened.
 
 ## Why it never slows down
 
@@ -182,18 +243,20 @@ The top of the pyramid is a multi-generation game of telephone; meaning drifts. 
 
 - [x] v0.1 serial edition: five tools, session-range anchors, cache-safe injection, byte-level OptMem `TREE/` compatibility
 - [x] v0.1.1 injection switch: by default the view is injected once at session start (`liveView` switches back to live updates, hot-reloaded)
+- [x] **Memory dashboard**: pyramid-layer view plus a timeline, clicking a memory jumps back to the conversation slice that produced it, four sample libraries included for comparison
+- [x] **Text into the tower**: shelve any existing document in `memory_handoff/` as source material; facts carry an anchor back to the full original
 - [ ] **Injection refinement**: incremental dynamic injection — track what each session has already seen and inject only what it hasn't
-- [ ] **Memory dashboard**: today the Memory view is readable only by the model — **you can't see your own memory**. Planned: a timeline list and pyramid-layer view where clicking a memory jumps back to the conversation slice that produced it (the anchor fields are written correctly *now* so that day needs no data migration)
+- [ ] **One brain across workspaces**: merge several workspaces' libraries into a single view
 - [ ] **Pyramid tutorial**: flowcharts and screenshots explaining how the tower is built, read, broken, and repaired
 - [ ] **Parallel settlement**: hand memory-writing to a dedicated clone so the main thread is never interrupted; an idle sweeper picks up unclaimed conversation ranges
 - [ ] OptMem `LOG.txt` migration converter (`TREE/` can be moved as-is)
 
 ## Known Limits
 
-- **Where the memory lands**: in `dsh_memory/` under the **dsh server process's startup directory**. Headless runs one process per task from the workspace, so it lands in the workspace; but the web GUI is one long-lived process serving multiple workspaces — switching a session's workspace in the UI does **not** switch the memory location, and all sessions share the copy under the startup directory. Practical rule: **start `dsh web` from inside your workspace directory.**
+- **Where the memory lands**: in `dsh_memory/` under **the workspace you opened in dsh**. Switch workspaces in the UI and the memory switches with you — one workspace, one library, the same way dsh keeps sessions per workspace. If a workspace looks empty, the memory is almost certainly not lost: it belongs to a different project. That separation is deliberate — one project's history has no business in another project's context. To pin one library everywhere, set `dataDir` to an absolute path; it overrides everything.
 - The peer-dependency warning `@deepseek-ai/cordis missing` is harmless: cordis is only referenced in type annotations, never imported at runtime, and dsh ships its own. Removed as of v0.1.1; safe to ignore on older versions.
 - Concurrent multi-process writing is supported and lock-free; but **sub-agents should not write memory** (they can't see what's already recorded). Currently enforced by prompt convention, not by code.
-- Session anchors are faithfully stored and returned by `memory_recall`, but the tool that *opens* the original conversation from an anchor doesn't exist yet — that belongs to the parallel-settlement edition.
+- **One workspace, one library; several libraries cannot yet be merged into a single view.** To share one memory across projects, point `dataDir` at the same absolute path.
 - Early version; the injection shape is still evolving (see the first Roadmap item). **Full reliability claims are left to real-world testing and issue reports** — if you hit something, please open an issue.
 
 ## License

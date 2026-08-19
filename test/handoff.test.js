@@ -190,7 +190,11 @@ test('memory_open 超长快照整齐收口，不吐半个 UTF-8 字符', async (
 test('改动检测：上架后被就地编辑的快照，open 点破而不是照吐', async () => {
   const dir = scratch()
   place(dir, 'origin.md', '入册时的版本')
-  const tools = mountedTools(dir) // 装载时巡架，指纹入流水
+  const tools = mountedTools(dir)
+  // 巡架（指纹入流水）发生在**这个库第一次被用到**的时候，不是装载的时候——
+  // 记忆按工作区分库之后，装载那一刻还不知道会用到哪个库，也不该去建目录。
+  // 所以先随便读一下把库开起来，再改文件，才是这条断言想验的那个先后。
+  await tools.get('memory_recall').execute({})
   fs.writeFileSync(path.join(shelfPath(dir), 'origin.md'), '事后被改过的版本')
 
   const opened = await tools.get('memory_open').execute({ source: 'origin.md' })
